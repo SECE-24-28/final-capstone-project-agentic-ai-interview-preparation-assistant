@@ -1,0 +1,18 @@
+# Environments
+.env
+venv/
+.venv/
+env/
+ENV/
+interview-prep-assistant/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node / Frontend
+node_modules/
+dist/
+.env.local
+.env.*.local
