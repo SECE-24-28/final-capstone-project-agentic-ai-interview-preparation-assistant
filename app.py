@@ -6,6 +6,8 @@ from agents.gap_agent import analyze_gap
 from agents.interview_agent import generate_question
 from agents.evaluation_agent import evaluate_answer
 from agents.report_agent import generate_report
+from agents.memory_agent import get_default_profile, update_memory
+from agents.planning_agent import plan_next_question
 
 TOTAL_QUESTIONS = 10
 
@@ -29,7 +31,7 @@ st.title("🎯 AI Interview Preparation Assistant")
 def init_session():
     """Initialize all session state variables including candidate level."""
     defaults = {
-        "stage":              "upload",   # upload | interview | report
+        "stage":              "upload",
         "candidate_level":    "Junior Developer",
         "resume_data":        None,
         "jd_data":            None,
@@ -43,6 +45,13 @@ def init_session():
         "report":             None,
         "answer_submitted":   False,
         "current_evaluation": None,
+        # Agentic memory & planning state
+        "candidate_profile":  None,
+        "evaluation_history": [],
+        "question_history":   [],
+        "answer_history":     [],
+        "planning_history":   [],
+        "current_plan":       None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -152,15 +161,30 @@ def render_upload_stage():
                     st.session_state.jd_data,
                 )
 
-                # Generate first question with selected level
+                # Init memory profile
+                st.session_state.candidate_profile = get_default_profile()
+
+                # Plan first question (no history yet)
+                plan = plan_next_question(
+                    st.session_state.resume_data,
+                    st.session_state.jd_data,
+                    st.session_state.candidate_profile,
+                    [],
+                    st.session_state.candidate_level,
+                )
+                st.session_state.current_plan = plan
+                st.session_state.planning_history.append(plan)
+
+                # Generate first question
                 st.session_state.current_question = generate_question(
                     st.session_state.resume_data,
                     st.session_state.jd_data,
                     st.session_state.gap_data,
                     [],
                     [],
-                    5.0,
                     st.session_state.candidate_level,
+                    st.session_state.candidate_profile,
+                    plan,
                 )
                 st.session_state.stage = "interview"
                 st.rerun()
@@ -242,14 +266,26 @@ def render_interview_stage():
             if st.button("➡️ Next Question", type="primary", use_container_width=True):
                 with st.spinner("Generating next question..."):
                     try:
+                        # Planning Agent decides what to ask next
+                        plan = plan_next_question(
+                            st.session_state.resume_data,
+                            st.session_state.jd_data,
+                            st.session_state.candidate_profile,
+                            st.session_state.evaluation_history,
+                            level,
+                        )
+                        st.session_state.current_plan = plan
+                        st.session_state.planning_history.append(plan)
+
                         next_q = generate_question(
                             st.session_state.resume_data,
                             st.session_state.jd_data,
                             st.session_state.gap_data,
                             st.session_state.previous_questions,
                             st.session_state.previous_answers,
-                            st.session_state.last_score,
                             level,
+                            st.session_state.candidate_profile,
+                            plan,
                         )
                         st.session_state.current_question   = next_q
                         st.session_state.answer_submitted   = False
@@ -276,11 +312,28 @@ def render_interview_stage():
         with st.spinner("Evaluating your answer..."):
             try:
                 evaluation = evaluate_answer(st.session_state.current_question, answer.strip())
+                score = evaluation.get("overall_score", 5.0)
+                feedback = evaluation.get("feedback", "")
+                topic = (
+                    st.session_state.current_plan.get("next_topic", "general")
+                    if st.session_state.current_plan else "general"
+                )
+
+                # Memory Agent: update profile and evaluation history
+                st.session_state.candidate_profile = update_memory(
+                    st.session_state.candidate_profile,
+                    st.session_state.evaluation_history,
+                    st.session_state.current_question,
+                    answer.strip(),
+                    topic,
+                    score,
+                    feedback,
+                )
 
                 st.session_state.previous_questions.append(st.session_state.current_question)
                 st.session_state.previous_answers.append(answer.strip())
                 st.session_state.evaluations.append(evaluation)
-                st.session_state.last_score         = evaluation.get("overall_score", 5.0)
+                st.session_state.last_score         = score
                 st.session_state.question_count    += 1
                 st.session_state.answer_submitted   = True
                 st.session_state.current_evaluation = evaluation

@@ -1,0 +1,6 @@
+.env
+venv/
+interview-prep-assistant/
+__pycache__/
+*.pyc
+*.pyo

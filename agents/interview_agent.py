@@ -335,39 +335,15 @@ def generate_question(
     gap_data: dict,
     previous_questions: list[str],
     previous_answers: list[str],
-    last_score: float = 5.0,
     candidate_level: str = "Junior Developer",
+    candidate_profile: dict = None,
+    plan: dict = None,
 ) -> str:
     """
-    Generate the next technical interview question based on candidate profile,
-    session history, and candidate level.
-
-    Adapts question depth based on last_score:
-      - >= 7 : deeper follow-up within the level's scope
-      - < 4  : simpler foundational question within the level's scope
-      - else : standard question for the level
-
-    Returns question text only.
+    Generate the next interview question driven by the Planning Agent output
+    and the candidate's memory profile.
     """
-
     config = LEVEL_CONFIG.get(candidate_level, LEVEL_CONFIG["Junior Developer"])
-
-    if last_score >= 7:
-        depth_note = (
-            "The candidate answered well. "
-            "Ask a deeper follow-up on the SAME topic. "
-            "Do NOT move into system design or scalability. "
-            "Explore implementation details further."
-        )
-    elif last_score < 4:
-        depth_note = (
-            "The candidate struggled. "
-            "Ask a simpler and more foundational question on the same topic."
-        )
-    else:
-        depth_note = (
-            "Ask a standard interview question appropriate for this level."
-        )
 
     candidate_projects = [
         f"{p.get('name', '')}: {p.get('description', '')} "
@@ -380,75 +356,60 @@ def generate_question(
         if previous_questions else "None"
     )
 
-    focus_str = "\n".join(f"- {f}" for f in config["focus"])
+    # Build planning context from Planning Agent output
+    if plan:
+        planning_context = (
+            f"Next Topic: {plan.get('next_topic', 'general')}\n"
+            f"Difficulty: {plan.get('difficulty', 'medium')}\n"
+            f"Reason: {plan.get('reason', '')}"
+        )
+    else:
+        planning_context = "Ask a standard opening question about the candidate's most relevant project."
+
+    # Build profile context
+    profile_context = ""
+    if candidate_profile:
+        strong = candidate_profile.get("strong_topics", [])
+        weak = candidate_profile.get("weak_topics", [])
+        covered = candidate_profile.get("covered_topics", [])
+        if strong:
+            profile_context += f"Strong topics (go deeper): {json.dumps(strong)}\n"
+        if weak:
+            profile_context += f"Weak topics (ask foundational follow-up): {json.dumps(weak)}\n"
+        if covered:
+            profile_context += f"Topics already sufficiently covered (avoid repeating): {json.dumps(covered)}\n"
+
     avoid_str = "\n".join(f"- {a}" for a in config["avoid"])
 
     prompt = f"""
 {INTERVIEWER_SYSTEM_PROMPT}
 
-Candidate Level:
-{candidate_level}
+Candidate Level: {candidate_level}
+Interview Type: {config['description']}
 
-Interview Type:
-{config['description']}
+Resume Skills: {json.dumps(resume_data.get('skills', []))}
+Projects: {json.dumps(candidate_projects)}
+JD Required Skills: {json.dumps(jd_data.get('required_skills', []))}
+Missing Skills (gaps): {json.dumps(gap_data.get('missing_skills', []))}
 
-Candidate Profile:
+Candidate Memory Profile:
+{profile_context if profile_context else 'No profile data yet.'}
 
-Skills:
-{json.dumps(resume_data.get('skills', []), indent=2)}
+Planning Agent Decision:
+{planning_context}
 
-Projects:
-{json.dumps(candidate_projects, indent=2)}
-
-Matched JD Skills:
-{json.dumps(gap_data.get('matched_skills', []), indent=2)}
-
-Missing Skills:
-{json.dumps(gap_data.get('missing_skills', []), indent=2)}
-
-JD Required Skills:
-{json.dumps(jd_data.get('required_skills', []), indent=2)}
-
-JD Responsibilities:
-{json.dumps(jd_data.get('responsibilities', []), indent=2)}
-
-Focus Areas:
-{focus_str}
-
-Topics To Avoid:
+Topics To NEVER Ask About:
 {avoid_str}
 
-Question Depth Guidance:
-{depth_note}
-
-Follow-Up Style:
-{config['followup_style']}
-
-Previous Questions Already Asked:
+Previous Questions Already Asked (do NOT repeat):
 {previous_q_str}
 
-Question Priority:
-
-1. Candidate's resume projects
-2. Technologies used in projects
-3. Skills common between resume and JD
-4. Missing skills required by JD
-5. Practical implementation details
-6. Challenges faced during development
-7. Behavioral questions relevant to the role
-
 IMPORTANT:
-
-- Ask exactly ONE question.
-- Sound like a human interviewer.
-- Use conversational English.
-- Keep the question short.
-- Avoid AI-generated sounding language.
-- Avoid academic wording.
-- Avoid multiple questions in one sentence.
-- Do not repeat previous questions.
-
-Return ONLY the interview question.
+- Ask exactly ONE question targeted at the planned next topic.
+- If the candidate is strong in that topic, go deeper into implementation details.
+- If the candidate is weak in that topic, ask a simpler foundational question.
+- Sound like a human interviewer — conversational, short, natural.
+- Return ONLY the question text.
 """
 
     return generate_response(prompt).strip()
